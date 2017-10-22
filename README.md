@@ -33,6 +33,11 @@ One needs to place JSON formatted config files in `$HOME/.config/scrapedbooru/`
 }
 ```
 
+Furthermore one needs to set up the database schema by running:
+```
+psql -f schema.sql [dbname [username]]
+```
+
 ## Usage
 
 At the moment it is barely usable and does not take any parameters.

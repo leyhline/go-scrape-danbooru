@@ -365,14 +365,13 @@ func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
 		log.Fatalf("ERROR Could not establish database connection. (%s)", err)
 	}
 	// And now for the scraping itself.
-	for currentId := startId; currentId < stopId; currentId++ {
+	for currentId := startId; currentId < stopId; currentId += dbooruLimit {
 		currentStop := currentId + dbooruLimit
 		if currentStop > stopId {
 			currentStop = stopId
 		}
 		scrapeBatch(currentId, currentStop, savePath, client, db, &auth)
 	}
-
 }
 
 func main() {

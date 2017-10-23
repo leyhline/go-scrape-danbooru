@@ -20,7 +20,9 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	_ "github.com/lib/pq"
 	"io"
 	"log"
 	"net/http"
@@ -29,12 +31,12 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"errors"
-	_ "github.com/lib/pq"
 )
 
 const (
 	configDir     = ".config/scrapedbooru"
+	authFilename  = "auth.json"
+	dbFilename    = "database.json"
 	netloc        = "https://danbooru.donmai.us"
 	netpath       = "posts.json"
 	dbooruLimit   = 20
@@ -68,10 +70,6 @@ func (conf *dbConf) getUrl() string {
 	return fmt.Sprintf("postgresql://%s:%s@%s:%d/%s?sslmode=disable",
 		conf.User, conf.Password, conf.Host, conf.Port, conf.Database)
 }
-
-const postColNames = "id, created_at, updated_at, uploader_id, score, source, md5, rating, image_width, image_height, " +
-	"file_ext, parent_id, has_children, file_size, up_score, down_score, " +
-	"is_pending, is_flagged, is_deleted, is_banned, pixiv_id, bit_flags, file_url"
 
 type Post struct {
 	Id                 int    `json:"id"`
@@ -239,11 +237,11 @@ func dbInsert(p *Post, db *sql.DB) {
 }
 
 // Save the contents of post.FileUrl in current directory.
-func saveFile(post *Post, client *http.Client) error {
+func saveFile(post *Post, path string, client *http.Client) error {
 	if post.FileUrl == "" {
 		return errors.New("There is no FileUrl field for post: " + strconv.Itoa(post.Id))
 	}
-	file, err := os.Create(fmt.Sprintf("%d.%s", post.Id, post.FileExt))
+	file, err := os.Create(fmt.Sprintf("%s/%d.%s", path, post.Id, post.FileExt))
 	if err != nil {
 		return err
 	}
@@ -325,33 +323,58 @@ func openDatabase(dbc *dbConf) (*sql.DB, error) {
 	return db, err
 }
 
-func main() {
+// Scrape just one batch with a maximum of 20 posts.
+func scrapeBatch(startId int, stopId int, savePath string, client *http.Client, db *sql.DB, auth *authDbooru) {
+	if !(startId < stopId) {
+		log.Fatalf("ERROR Invalid arguments: startId %d has to be smaller than stopId %d", startId, stopId)
+	}
+	ps := requestPost(startId, stopId, client, auth)
+	for i := range ps {
+		dbInsert(&ps[i], db)
+		err := saveFile(&ps[i], savePath, client)
+		if err != nil {
+			log.Printf("WARNING Saving post failed: %d (%s)", ps[i].Id, err)
+		}
+	}
+}
+
+// This is the big wrapper function called from main()
+func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
+	if !(startId < stopId) {
+		log.Fatalf("ERROR Invalid arguments: startId %d has to be smaller than stopId %d", startId, stopId)
+	}
+	// Create a client for requests.
 	client := &http.Client{
 		Timeout: clientTimeout,
 	}
+	// Read configurations.
 	var auth authDbooru
-	err := parseConfig("auth.json", &auth)
+	err := parseConfig(authFilename, &auth)
 	if err != nil {
-		log.Fatalf("Could not open configuration file: $HOME/%s/auth.json (%s)",
-			configDir, err)
+		log.Printf("WARNING Could not open configuration file: $HOME/%s/auth.json (%s)", configDir, err)
+		log.Print("WARNING Authentication not possible. Fallback to anonymous user.")
 	}
-	p := requestPost(20, 40, client, &auth)
-	for _, v := range p {
-		fmt.Print(v.Id, " ")
-	}
-
 	var dbc dbConf
-	err = parseConfig("database.json", &dbc)
+	err = parseConfig(dbFilename, &dbc)
 	if err != nil {
-		log.Fatalf("Could not open configuration file: $HOME/%s/database.json (%s)",
-			configDir, err)
+		log.Fatalf("ERROR Could not open configuration file: $HOME/%s/database.json (%s)", configDir, err)
 	}
+	// Open database connection.
 	db, err := openDatabase(&dbc)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("ERROR Could not establish database connection. (%s)", err)
 	}
-	for i := range p {
-		dbInsert(&p[i], db)
-		//saveFile(&p[i], client)
+	// And now for the scraping itself.
+	for currentId := startId; currentId < stopId; currentId++ {
+		currentStop := currentId + dbooruLimit
+		if currentStop > stopId {
+			currentStop = stopId
+		}
+		scrapeBatch(currentId, currentStop, savePath, client, db, &auth)
 	}
+
+}
+
+func main() {
+	scrapeRange(0, 100, ".", 10)
 }

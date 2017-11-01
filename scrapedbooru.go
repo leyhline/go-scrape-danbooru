@@ -424,5 +424,30 @@ func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
 }
 
 func main() {
-	scrapeRange(1, 1, ".", 10)
+	// TODO Use flag library for command line parsing
+	const savePath = "."
+	const nrThreads = 10
+	if len(os.Args) == 2 {
+		startId, err := strconv.Atoi(os.Args[1])
+		if err != nil {
+			fmt.Printf("Arguments needs to be an integer: %s", os.Args[1])
+			return
+		}
+		scrapeRange(startId, startId, savePath, nrThreads)
+	} else if len(os.Args) == 3 {
+		startId, err := strconv.Atoi(os.Args[1])
+		if err != nil {
+			fmt.Printf("Arguments needs to be an integer: %s", os.Args[1])
+			return
+		}
+		stopId, err := strconv.Atoi(os.Args[1])
+		if err != nil {
+			fmt.Printf("Arguments needs to be an integer: %s", os.Args[2])
+			return
+		}
+		scrapeRange(startId, stopId, savePath, nrThreads)
+	} else {
+		fmt.Printf("Usage: %s startId stopId\nScrapes all id's in range [startId,stopId)", os.Args[0])
+		return
+	}
 }

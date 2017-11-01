@@ -43,6 +43,8 @@ const (
 	dbooruLimit   = 20
 	clientTimeout = time.Second * 10
 	driverName    = "postgres"
+	timeout429    = time.Second * 10  // Too Many Requests
+	timeout503    = time.Minute * 10  // Service Unavailable
 )
 
 // Tag categories
@@ -117,7 +119,15 @@ func makeRequest(url string, client *http.Client, auth *authDbooru) (*http.Respo
 	if err != nil {
 		return nil, err
 	}
-	if res.StatusCode != 200 {
+	if res.StatusCode == 429 {
+		time.Sleep(timeout429)
+		log.Printf("%s; Retrying in %d seconds: %s", res.Status, timeout429, url)
+		return makeRequest(url, client, auth) // Recursion (this might be a bad idea)
+	} else if res.StatusCode == 503 {
+		time.Sleep(timeout503)
+		log.Printf("%s; Retrying in %d minutes: %s", res.Status, timeout503, url)
+		return makeRequest(url, client, auth)
+	} else if res.StatusCode != 200 {
 		return nil, errors.New("Response status indicates failure: " + res.Status)
 	}
 	return res, nil
@@ -426,7 +436,7 @@ func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
 func main() {
 	// TODO Use flag library for command line parsing
 	const savePath = "."
-	const nrThreads = 10
+	const nrThreads = 5
 	if len(os.Args) == 2 {
 		startId, err := strconv.Atoi(os.Args[1])
 		if err != nil {
@@ -447,7 +457,7 @@ func main() {
 		}
 		scrapeRange(startId, stopId, savePath, nrThreads)
 	} else {
-		fmt.Printf("Usage: %s startId stopId\nScrapes all id's in range [startId,stopId)", os.Args[0])
+		fmt.Printf("Usage: %s startId stopId\nScrapes all id's in range [startId,stopId)\n", os.Args[0])
 		return
 	}
 }

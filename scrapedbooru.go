@@ -157,7 +157,7 @@ func dbInsertTags(tags string, category string, postId int, db *sql.DB) {
 		return
 	}
 	tagQuery, errQ := tx.Prepare("SELECT id FROM tags WHERE name = $1")
-	taggedInsert, errI := tx.Prepare("INSERT INTO tagged VALUES ($1, $2)")
+	taggedInsert, errI := tx.Prepare("INSERT INTO tagged VALUES ($1, $2) ON CONFLICT DO NOTHING")
 	if errQ != nil || errI != nil {
 		log.Printf("Inserting tags failed for post: %d (%s; %s)", postId, errQ, errI)
 	} else {
@@ -196,17 +196,16 @@ func dbInsert(p *Post, db *sql.DB) {
 	dbInsertTags(p.TagStringCharacter, character, p.Id, db)
 	dbInsertTags(p.TagStringCopyright, copyright, p.Id, db)
 	dbInsertTags(p.TagStringGeneral, general, p.Id, db)
-	// Start transaction for inserting favorites and pools.
 	if strings.TrimSpace(p.FavString) == "" &&
 		strings.TrimSpace(p.PoolString) == "" {
 		return
 	}
 	tx, err := db.Begin()
 	if err != nil {
-		log.Printf("Inserting favorites and pools failed for post: %d (%s)", p.Id, err)
+		log.Printf("Inserting favorites failed for post: %d (%s)", p.Id, err)
 		return
 	}
-	stmt, err := tx.Prepare("INSERT INTO favorites VALUES ($1, $2)")
+	stmt, err := tx.Prepare("INSERT INTO favorites VALUES ($1, $2) ON CONFLICT DO NOTHING")
 	if err != nil {
 		log.Printf("Inserting favorites failed for post: %d (%s)", p.Id, err)
 	} else {
@@ -220,7 +219,13 @@ func dbInsert(p *Post, db *sql.DB) {
 			}
 		}
 	}
-	stmt, err = tx.Prepare("INSERT INTO pooled VALUES ($1, $2)")
+	tx.Commit()
+	tx, err = db.Begin()
+	if err != nil {
+		log.Printf("Inserting pools failed for post: %d (%s)", p.Id, err)
+		return
+	}
+	stmt, err = tx.Prepare("INSERT INTO pooled VALUES ($1, $2) ON CONFLICT DO NOTHING")
 	if err != nil {
 		log.Printf("Inserting pools failed for post: %d (%s)", p.Id, err)
 	} else {
@@ -282,13 +287,20 @@ func parseConfig(path string, v interface{}) error {
 // Query for all posts with startId <= postId < stopId.
 // There is a hard limit (from the server) for a limit of 20 posts.
 // Optionally use authentication if account credentials are given.
+// If startId == stopId then just request a single post.
 func requestPost(startId int, stopId int, client *http.Client, auth *authDbooru) []Post {
 	if stopId-startId > dbooruLimit {
 		log.Fatalf("The hard limit for requesting posts is 20. %d posts actually requested.",
 			stopId-startId)
 	}
-	query := fmt.Sprintf("?tags=id:<%d&limit=%d", stopId, dbooruLimit)
-	url := netloc + "/" + netpath + query
+	var url string
+	if startId == stopId {
+		query := fmt.Sprintf("%d.json", startId)
+		url = netloc + "/posts/" + query
+	} else {
+		query := fmt.Sprintf("?tags=id:<%d&limit=%d", stopId, dbooruLimit)
+		url = netloc + "/" + netpath + query
+	}
 	var p []Post
 	res, err := makeRequest(url, client, auth)
 	if err != nil {
@@ -297,7 +309,13 @@ func requestPost(startId int, stopId int, client *http.Client, auth *authDbooru)
 	}
 	defer res.Body.Close()
 	decoder := json.NewDecoder(res.Body)
-	err = decoder.Decode(&p)
+	if startId == stopId {
+		var post Post
+		err = decoder.Decode(&post)
+		p = append(p, post)
+	} else {
+		err = decoder.Decode(&p)
+	}
 	if err != nil {
 		log.Printf("Failed decoding response of: %s (%s)", url, err)
 		return p
@@ -326,7 +344,7 @@ func openDatabase(dbc *dbConf) (*sql.DB, error) {
 
 // Scrape just one batch with a maximum of 20 posts.
 func scrapeBatch(startId int, stopId int, savePath string, client *http.Client, db *sql.DB, auth *authDbooru) {
-	if !(startId < stopId) {
+	if startId > stopId {
 		log.Fatalf("ERROR Invalid arguments: startId %d has to be smaller than stopId %d", startId, stopId)
 	}
 	ps := requestPost(startId, stopId, client, auth)
@@ -346,7 +364,7 @@ type intPair struct {
 
 // This is the big wrapper function called from main()
 func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
-	if !(startId < stopId) {
+	if startId > stopId {
 		log.Fatalf("ERROR Invalid arguments: startId %d has to be smaller than stopId %d", startId, stopId)
 	}
 	// Create a client for requests.
@@ -371,6 +389,11 @@ func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
 		log.Fatalf("ERROR Could not establish database connection. (%s)", err)
 	}
 	// And now for the scraping itself.
+	// If there is just one post don't use concurrent goroutines.
+	if startId == stopId {
+		scrapeBatch(startId, stopId, savePath, client, db, &auth)
+		return
+	}
 	// <https://stackoverflow.com/questions/25306073/go-always-have-x-number-of-goroutines-running-at-any-time>
 	var paramChannel = make(chan intPair)
 	var waitGroup sync.WaitGroup
@@ -401,5 +424,5 @@ func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
 }
 
 func main() {
-	//scrapeRange(0, 100, ".", 10)
+	scrapeRange(1, 1, ".", 10)
 }

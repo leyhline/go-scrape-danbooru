@@ -30,6 +30,7 @@ import (
 	"os/user"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -338,6 +339,11 @@ func scrapeBatch(startId int, stopId int, savePath string, client *http.Client, 
 	}
 }
 
+type intPair struct {
+	first  int
+	second int
+}
+
 // This is the big wrapper function called from main()
 func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
 	if !(startId < stopId) {
@@ -365,15 +371,35 @@ func scrapeRange(startId int, stopId int, savePath string, nrThreads int) {
 		log.Fatalf("ERROR Could not establish database connection. (%s)", err)
 	}
 	// And now for the scraping itself.
+	// <https://stackoverflow.com/questions/25306073/go-always-have-x-number-of-goroutines-running-at-any-time>
+	var paramChannel = make(chan intPair)
+	var waitGroup sync.WaitGroup
+	// Start the specified number of goroutines.
+	waitGroup.Add(nrThreads)
+	for i := 0; i < nrThreads; i++ {
+		go func() {
+			for {
+				params, ok := <-paramChannel
+				if !ok {
+					waitGroup.Done()
+					return
+				}
+				scrapeBatch(params.first, params.second, savePath, client, db, &auth)
+			}
+		}()
+	}
+	// And now add all the parameter pairs to the channel, specifying the jobs.
 	for currentId := startId; currentId < stopId; currentId += dbooruLimit {
 		currentStop := currentId + dbooruLimit
 		if currentStop > stopId {
 			currentStop = stopId
 		}
-		scrapeBatch(currentId, currentStop, savePath, client, db, &auth)
+		paramChannel <- intPair{currentId, currentStop}
 	}
+	close(paramChannel)
+	waitGroup.Wait()
 }
 
 func main() {
-	scrapeRange(0, 100, ".", 10)
+	//scrapeRange(0, 100, ".", 10)
 }

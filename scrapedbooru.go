@@ -440,7 +440,7 @@ func main() {
 			fmt.Printf("Arguments needs to be an integer: %s", os.Args[1])
 			return
 		}
-		stopId, err := strconv.Atoi(os.Args[1])
+		stopId, err := strconv.Atoi(os.Args[2])
 		if err != nil {
 			fmt.Printf("Arguments needs to be an integer: %s", os.Args[2])
 			return

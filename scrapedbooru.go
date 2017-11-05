@@ -43,8 +43,8 @@ const (
 	dbooruLimit   = 20
 	clientTimeout = time.Second * 10
 	driverName    = "postgres"
-	timeout429    = time.Second * 10  // Too Many Requests
-	timeout503    = time.Minute * 10  // Service Unavailable
+	timeout429    = time.Second * 10 // Too Many Requests
+	timeout503    = time.Minute * 10 // Service Unavailable
 )
 
 // Tag categories
@@ -121,11 +121,15 @@ func makeRequest(url string, client *http.Client, auth *authDbooru) (*http.Respo
 	}
 	if res.StatusCode == 429 {
 		time.Sleep(timeout429)
-		log.Printf("%s; Retrying in %d seconds: %s", res.Status, timeout429, url)
+		log.Printf("%s; Retrying in %d: %s", res.Status, timeout429, url)
 		return makeRequest(url, client, auth) // Recursion (this might be a bad idea)
+	} else if res.StatusCode == 502 {
+		time.Sleep(timeout429)
+		log.Printf("%s; Retrying in %d: %s", res.Status, timeout429, url)
+		return makeRequest(url, client, auth)
 	} else if res.StatusCode == 503 {
 		time.Sleep(timeout503)
-		log.Printf("%s; Retrying in %d minutes: %s", res.Status, timeout503, url)
+		log.Printf("%s; Retrying in %d: %s", res.Status, timeout503, url)
 		return makeRequest(url, client, auth)
 	} else if res.StatusCode != 200 {
 		return nil, errors.New("Response status indicates failure: " + res.Status)
@@ -455,6 +459,7 @@ func main() {
 			fmt.Printf("Arguments needs to be an integer: %s", os.Args[2])
 			return
 		}
+		fmt.Printf("Scraping range [%d, %d) using %d threads...\n", startId, stopId, nrThreads)
 		scrapeRange(startId, stopId, savePath, nrThreads)
 	} else {
 		fmt.Printf("Usage: %s startId stopId\nScrapes all id's in range [startId,stopId)\n", os.Args[0])
